@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install deps
+        run: go mod tidy
+
+      - name: Run unit tests
+        run: go test ./... -v -run 'Test[^I]|TestBuild'
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    # Skip on PRs from forks where secrets are unavailable
+    if: >
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install deps
+        run: go mod tidy
+
+      - name: Decode test images into testdata/
+        env:
+          CI_IMAGE_PARTS: ${{ secrets.CI_IMAGE_PARTS }}
+          CI_IMAGE_SETS: ${{ secrets.CI_IMAGE_SETS }}
+          CI_IMAGE_MINIFIGS: ${{ secrets.CI_IMAGE_MINIFIGS }}
+        run: |
+          mkdir -p testdata
+          [ -n "$CI_IMAGE_PARTS" ]    && echo "$CI_IMAGE_PARTS"    | base64 -d > testdata/parts.jpg    || true
+          [ -n "$CI_IMAGE_SETS" ]     && echo "$CI_IMAGE_SETS"     | base64 -d > testdata/sets.jpg     || true
+          [ -n "$CI_IMAGE_MINIFIGS" ] && echo "$CI_IMAGE_MINIFIGS" | base64 -d > testdata/minifigs.jpg || true
+
+      - name: Run integration tests
+        env:
+          TEST_IMAGE_DIR: ./testdata
+          TEST_IMAGE_PARTS: parts.jpg
+          TEST_IMAGE_SETS: sets.jpg
+          TEST_IMAGE_MINIFIGS: minifigs.jpg
+          TEST_EXPECTED_PARTS: ${{ secrets.CI_EXPECTED_PARTS }}
+          TEST_EXPECTED_SETS: ${{ secrets.CI_EXPECTED_SETS }}
+          TEST_EXPECTED_MINIFIGS: ${{ secrets.CI_EXPECTED_MINIFIGS }}
+        run: go test ./... -run TestIntegrationEndpointMatrix -v -timeout 120s
